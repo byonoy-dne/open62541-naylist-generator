@@ -8,18 +8,26 @@ basedir = "/home/delf/workspace/byonoy/shimmer/nodesets-public/"
 
 full = [
     "AbsorbanceReader.xml",
+    "Opc.Ua.LADS.NodeSet2.xml",
 ]
+
 dependencies = [
     "Opc.Ua.AMB.NodeSet2.xml",
     "Opc.Ua.Di.NodeSet2.xml",
-    "Opc.Ua.LADS.NodeSet2.xml",
     "Opc.Ua.Machinery.NodeSet2.xml",
     "Opc.Ua.NodeSet2.xml",
 ]
 
-out_filename = "/tmp/blacklist.txt"
+out_filename = "/home/delf/workspace/byonoy/shimmer/shimmer-test-app/nodesets/nodes_nope_list.txt"
 
-id_pattern = re.compile(r'[>"](ns=(?P<ns>\d+);)?i=(?P<i>\d+)[<"]')
+add_all_ref_types = True
+add_all_data_types = True
+
+add_all_ref_types = False
+add_all_data_types = False
+
+id_pattern = re.compile(r'(ns=(?P<ns>\d+);)?i=(?P<i>\d+)')
+embedded_id_pattern = re.compile(r'[>"](ns=(?P<ns>\d+);)?i=(?P<i>\d+)[<"]')
 
 
 class NodeSetData(NamedTuple):
@@ -32,59 +40,95 @@ class Node(NamedTuple):
     ns: str
     i: int
 
-    def to_string(self, ns_lookup : list[str] = None):
+    def to_string(self, ns_lookup: list[str] = None):
         if ns_lookup:
             return f"i={self.i}" if len(self.ns) == 0 else f"ns={ns_lookup.index(self.ns)};i={self.i}"
         else:
             return f"i={self.i}" if len(self.ns) == 0 else f"ns={self.ns};i={self.i}"
 
 
-def namespaces(tree : ET.Element) -> list[str]:
-    result : list[str] = [""]
+def namespaces(tree: ET.Element) -> list[str]:
+    result: list[str] = [""]
     ns = {'ua': 'http://opcfoundation.org/UA/2011/03/UANodeSet.xsd'}
-    for uri in tree.findall('.//ua:NamespaceUris/ua:Uri', ns):
+    for uri in tree.findall('./ua:NamespaceUris/ua:Uri', ns):
         result.append(uri.text)
     return result
 
 
-def all_refs(data : NodeSetData) -> set[Node]:
-    result : set[Node] = set()
+def all_refs(data: NodeSetData) -> set[Node]:
+    result: set[Node] = set()
 
-    for match in id_pattern.finditer(data.contents):
-        result.add(Node(data.ns_lookup[int(match.group('ns') or 0)], int(match.group('i'))))
+    for match in embedded_id_pattern.finditer(data.contents):
+        result.add(
+            Node(data.ns_lookup[int(match.group('ns') or 0)], int(match.group('i'))))
 
     return result
 
 
-def some_refs(data : NodeSetData, include : set[Node]):
-    result : set[Node] = set()
+def some_refs(data: NodeSetData, include: set[Node]) -> None:
+    result: set[Node] = set()
 
     for node in filter(lambda n: n.ns in data.ns_lookup, include):
         for match in data.tree.findall(f".//*[@NodeId='{node.to_string(data.ns_lookup)}']"):
-            result.update(all_refs(NodeSetData(ET.tostring(match, encoding='unicode'), match, data.ns_lookup)))
+            result.update(all_refs(NodeSetData(ET.tostring(
+                match, encoding='unicode'), match, data.ns_lookup)))
 
     return result
 
 
-def load_node_set(filename : str):
+def ref_refs(data: NodeSetData) -> set[Node]:
+    result: set[Node] = set()
+
+    for ref in data.tree.findall(".//*[@ReferenceType]"):
+        match = id_pattern.match(ref.get("ReferenceType"))
+        result.add(
+            Node(data.ns_lookup[int(match.group('ns') or 0)], int(match.group('i'))))
+
+    return result
+
+
+def data_types(data: NodeSetData) -> set[Node]:
+    result: set[Node] = set()
+
+    ns = {'ua': 'http://opcfoundation.org/UA/2011/03/UANodeSet.xsd'}
+    for match in data.tree.findall(".//ua:UADataType", ns):
+        result.update(all_refs(NodeSetData(ET.tostring(
+            match, encoding='unicode'), match, data.ns_lookup)))
+
+    return result
+
+
+def resolve_aliases(data: str) -> str:
+    tree = ET.fromstring(data)
+    ns = {'ua': 'http://opcfoundation.org/UA/2011/03/UANodeSet.xsd'}
+    for alias in tree.findall('./ua:Aliases/ua:Alias', ns):
+        pattern = re.compile(
+            f'(?P<open>[>"]){alias.get("Alias")}(?P<close>[<"])')
+        data = pattern.sub(f'\\g<open>{alias.text}\\g<close>', data)
+
+    return data
+
+
+def load_node_set(filename: str) -> NodeSetData:
     with open(filename) as f:
-        data = f.read()
+        data = resolve_aliases(f.read())
         tree = ET.fromstring(data)
         return NodeSetData(data, tree, namespaces(tree))
 
 
-yay = set()
-nay = set()
-everything = set()
+yay: set[Node] = set()
+nay: set[Node] = set()
+everything: set[Node] = set()
 
 for filename in full:
-    print(f"Parsing application nodeset file {filename}")
+    print(f"Parsing application nodeset {filename}")
     nodeset = load_node_set(basedir + '/' + filename)
     yay.update(all_refs(nodeset))
 
 everything.update(yay)
 
-print(f"The application nodesets contain {len(yay)} nodes and direct references")
+print(
+    f"The application nodesets contain {len(yay)} nodes and direct references")
 
 dep_data = {}
 dep_added_nss = []
@@ -104,13 +148,24 @@ sorted_deps.reverse()
 
 print("Adding dependencies")
 for d in dep_added_nss:
-    print(f"\t{d or 'Zero'}")
+    print(f"\t{d or 'http://opcfoundation.org/UA/'}")
 
-print("This might take a while, especially namespace zero...\n")
+print("\nThis might take a while, especially namespace zero...\n")
 
 for i, nodeset in enumerate(sorted_deps):
-    print(f"Parsing dependent nodeset {dep_added_nss[i] or 'Zero'}")
+    print(f"Parsing dependency {dep_added_nss[i] or 'http://opcfoundation.org/UA/'}")
     everything.update(all_refs(nodeset))
+
+    if add_all_ref_types:
+        refs = ref_refs(nodeset)
+        yay.update(refs)
+        print(f"\tAdded {len(refs)} reference types...")
+
+    if add_all_data_types:
+        types = data_types(nodeset)
+        yay.update(types)
+        print(f"\tAdded {len(types)} data types...")
+
     len_before = len(yay)
     while True:
         new_refs = some_refs(nodeset, yay)
@@ -120,7 +175,8 @@ for i, nodeset in enumerate(sorted_deps):
             break
         print(f"\tAdded another {len(yay) - old_len} transitive references...")
 
-    print(f"\tFound {len(yay) - len_before} additional transitively referenced nodes\n")
+    print(
+        f"\tFound {len(yay) - len_before} additional transitively referenced nodes\n")
 
 print(f"Yay-listed {len(yay)} of {len(everything)} nodes")
 
@@ -130,5 +186,5 @@ print(f"Nay-listed {len(nay)} of {len(everything)} nodes")
 
 with open(out_filename, 'w') as f:
     for n in natsorted(map(lambda x: x.to_string(), nay)):
-        print(n)
+        # print(n)
         f.write(n + "\n")
