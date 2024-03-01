@@ -24,13 +24,13 @@ options:
 For example:
 
 ```
-generate_nay_list.py \
+generate_naylist.py \
     AbsorbanceReader.xml Opc.Ua.LADS.NodeSet2.xml \
     --dependency Opc.Ua.AMB.NodeSet2.xml \
     --dependency Opc.Ua.Di.NodeSet2.xml \
     --dependency Opc.Ua.Machinery.NodeSet2.xml \
     --dependency Opc.Ua.NodeSet2.xml \
     --all-refs --all-data \
-    --output nay_list.txt \
+    --output naylist.txt \
     --verbose
 ```
