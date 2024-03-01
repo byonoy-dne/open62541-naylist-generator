@@ -1,0 +1,25 @@
+diff --git a/tools/nodeset_compiler/nodeset.py b/tools/nodeset_compiler/nodeset.py
+--- a/tools/nodeset_compiler/nodeset.py
++++ b/tools/nodeset_compiler/nodeset.py
+@@ -203,6 +203,7 @@ class NodeSet(object):
+     def getNodeByIDString(self, idStr):
+         # Split id to namespace part and id part
+         m = re.match("ns=([^;]+);(.*)", idStr)
++        ns = 0
+         if m:
+             ns = m.group(1)
+             # Convert namespace uri to index
+@@ -211,7 +212,13 @@ class NodeSet(object):
+                     return None
+                 ns = self.namespaces.index(ns)
+                 idStr = "ns={};{}".format(ns, m.group(2))
++
++            ns = int(ns)
++
+         nodeId = NodeId(idStr)
++        # The NodeId c'tor performs a namespace mapping, but we know better in this case.
++        nodeId.ns = ns
++
+         if not nodeId in self.nodes:
+             return None
+         return self.nodes[nodeId]
